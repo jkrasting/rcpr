@@ -1,0 +1,23 @@
+# Autotools generated
+autom4te.cache/
+aclocal.m4
+config.guess
+config.sub
+compile
+depcomp
+install-sh
+missing
+configure
+config.log
+config.status
+Makefile
+Makefile.in
+src/Makefile
+src/Makefile.in
+
+# Build artifacts
+*.o
+*.a
+.deps/
+src/.deps/
+src/rcpr
