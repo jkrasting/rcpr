@@ -1,4 +1,4 @@
-AC_INIT([rcpr], [0.1.0], [https://github.com/krasting/rcpr/issues])
+AC_INIT([rcpr], [0.1.0], [https://github.com/jkrasting/rcpr/issues])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror])
 AC_CANONICAL_HOST
 AC_PROG_CC
