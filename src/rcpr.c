@@ -41,6 +41,7 @@ static void usage(void)
 "\n"
 "Control:\n"
 "  -C           Do not cut the paper (cutting is the default)\n"
+"  -B           Do not add a blank line before the cut\n"
 "  -n N         Feed N lines after print (default: 4)\n"
 "  -r           Reset printer before printing\n"
 "\n"
@@ -176,10 +177,10 @@ int main(int argc, char **argv)
 	const char *host = DEFAULT_HOST, *port = DEFAULT_PORT;
 	int size = 1, font = 0, align = ALIGN_LEFT;
 	int bold = 0, underline = 0, cut = 1, reset = 0;
-	int feed = 4, width = 0, nowrap = 0;
+	int feed = 4, width = 0, nowrap = 0, blank = 1;
 	int opt;
 
-	while ((opt = getopt(argc, argv, "d:P:H:s:S:a:buw:Wi:cCn:rf:hv")) != -1) {
+	while ((opt = getopt(argc, argv, "d:P:H:s:S:a:buw:Wi:cCBn:rf:hv")) != -1) {
 		switch (opt) {
 		case 'd': device = optarg; break;
 		case 'P': printer = optarg; break;
@@ -194,6 +195,7 @@ int main(int argc, char **argv)
 		case 'i': image = optarg; break;
 		case 'c': break; /* accepted: cutting is the default */
 		case 'C': cut = 0; break;
+		case 'B': blank = 0; break;
 		case 'n': feed = atoi(optarg); break;
 		case 'r': reset = 1; break;
 		case 'f': textfile = optarg; break;
@@ -269,7 +271,8 @@ int main(int argc, char **argv)
 		free(text);
 	}
 
-	/* trailing feed + cut */
+	/* blank line to close the receipt off, then feed + cut */
+	if (cut && blank) buf_byte(&b, '\n');
 	esc_feed(&b, feed);
 	if (cut) esc_cut(&b);
 

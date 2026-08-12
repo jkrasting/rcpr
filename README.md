@@ -80,6 +80,7 @@ Image:
 
 Control:
   -C           Do not cut the paper (cutting is the default)
+  -B           Do not add a blank line before the cut
   -n N         Feed N lines after print (default: 4)
   -r           Reset printer before printing
 

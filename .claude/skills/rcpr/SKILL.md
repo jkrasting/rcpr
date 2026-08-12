@@ -35,6 +35,7 @@ rcpr [OPTIONS] [TEXT]
 
 **Control:**
 - `-C` — Do NOT cut the paper (cutting is the default)
+- `-B` — Do NOT add a blank line before the cut (the blank line is the default)
 - `-n N` — Feed N lines after print (default: 4)
 - `-r` — Reset printer before printing
 
@@ -82,6 +83,8 @@ rcpr "last part, cuts here"
 - Cutting is the default. Use `-C` only when the user wants the paper left attached, or when
   building one receipt from several commands — put `-C` on every command except the last.
 - `-c` is still accepted and does nothing; it is left over from older versions.
+- A blank line is added before the cut so receipts do not end flush against the tear. `-B` removes
+  it; it is skipped automatically when `-C` means there is no cut.
 - Word wrapping is on by default, is UTF-8 aware, and preserves leading indentation. Use `-W` only
   when the user explicitly wants long lines left unwrapped.
 - Font 0 (default) has 48 chars per line at size 1. Font 1 has 64.
