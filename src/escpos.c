@@ -102,11 +102,38 @@ void esc_cut(buf_t *b)
 
 /* --- word wrap + justify --- */
 
+/* byte length of the UTF-8 character at p (1 for an invalid byte) */
+static int utf8_len(const char *p)
+{
+	unsigned char c = (unsigned char)*p;
+	if (c < 0x80) return 1;
+	if ((c & 0xE0) == 0xC0) return 2;
+	if ((c & 0xF0) == 0xE0) return 3;
+	if ((c & 0xF8) == 0xF0) return 4;
+	return 1;
+}
+
+/* number of characters in a byte span */
+static int utf8_count(const char *p, int len)
+{
+	int i = 0, n = 0;
+	while (i < len) { i += utf8_len(p + i); n++; }
+	return n;
+}
+
+/* byte offset of the nth character, clamped to len */
+static int utf8_offset(const char *p, int len, int nchars)
+{
+	int i = 0, n = 0;
+	while (i < len && n < nchars) { i += utf8_len(p + i); n++; }
+	return i > len ? len : i;
+}
+
 /* emit a single line, applying justify spacing if needed */
 static void emit_line(buf_t *b, const char *line, int len, int width,
 		       int align, int last)
 {
-	if (align == ALIGN_JUSTIFY && !last) {
+	if (align == ALIGN_JUSTIFY && !last && width > 0) {
 		/* count words */
 		int wc = 0, i = 0;
 		while (i < len) {
@@ -128,7 +155,7 @@ static void emit_line(buf_t *b, const char *line, int len, int width,
 					int start = i;
 					while (i < len && line[i] != ' ') i++;
 					wlens[wi] = i - start;
-					text_len += wlens[wi];
+					text_len += utf8_count(&line[start], wlens[wi]);
 					wi++;
 				}
 			}
@@ -162,20 +189,22 @@ static void emit_line(buf_t *b, const char *line, int len, int width,
 void esc_text(buf_t *b, const char *text, int width, int align)
 {
 	if (!text || !*text) return;
-	if (width <= 0) width = 48;
 
 	const char *p = text;
+	int soft = 0; /* last break was a soft wrap: eat the spaces it broke on */
 	while (*p) {
-		/* skip leading spaces at line start */
-		while (*p == ' ') p++;
-		if (!*p) break;
+		if (soft) {
+			while (*p == ' ') p++;
+			soft = 0;
+			if (!*p) break;
+		}
 
-		/* check for explicit newline */
+		/* an explicit newline bounds the line */
 		const char *nl = strchr(p, '\n');
 		int avail = nl ? (int)(nl - p) : (int)strlen(p);
 
-		if (avail <= width) {
-			/* fits on one line */
+		if (width <= 0 || utf8_count(p, avail) <= width) {
+			/* fits on one line (or wrapping is off) */
 			int is_last = (!nl || !*(nl + 1));
 			emit_line(b, p, avail, width, align, is_last);
 			p += avail;
@@ -183,18 +212,20 @@ void esc_text(buf_t *b, const char *text, int width, int align)
 			continue;
 		}
 
-		/* need to wrap: find last space within width */
-		int brk = width;
+		/* wrap: take width characters, then back up to the last space */
+		int limit = utf8_offset(p, avail, width);
+		int brk = limit;
 		while (brk > 0 && p[brk] != ' ')
 			brk--;
 
 		if (brk == 0) {
-			/* no space found, hard break */
-			emit_line(b, p, width, width, align, 0);
-			p += width;
+			/* no space found: hard break, always on a character boundary */
+			emit_line(b, p, limit, width, align, 0);
+			p += limit;
 		} else {
 			emit_line(b, p, brk, width, align, 0);
-			p += brk + 1; /* skip the space */
+			p += brk;
+			soft = 1;
 		}
 	}
 }

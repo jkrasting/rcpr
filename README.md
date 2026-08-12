@@ -4,13 +4,14 @@ ESC/POS receipt printer CLI — print text and images from the command line via 
 
 ## Features
 
+- Prints straight to a network printer over TCP — no CUPS, no drivers, no spooler
 - Print text with configurable font size, bold, underline, and alignment
 - Print images (PNG, JPG, GIF, BMP) using ESC/POS raster graphics
-- Word wrapping with proper character-per-line calculation
+- UTF-8 aware word wrapping that keeps words whole and preserves indentation
 - Text justification support (left, center, right, justify)
 - Paper cut control
-- Direct device output or CUPS printer queue
-- Pipe-friendly: combine multiple style runs into a single print job
+- Pipe-friendly: `cat notes.txt | rcpr` just works
+- Can also target a raw device or a CUPS queue
 
 ## Installation
 
@@ -18,7 +19,9 @@ ESC/POS receipt printer CLI — print text and images from the command line via 
 
 - C compiler (gcc or clang)
 - autotools (autoconf, automake)
-- CUPS development headers (`libcups2-dev` on Debian/Ubuntu)
+
+No external libraries are required. CUPS is optional and only needed if you use `-P`, which shells
+out to `lp`.
 
 ### Build
 
@@ -33,19 +36,25 @@ This installs `rcpr` to `/usr/local/bin`.
 
 ## Printer Setup
 
-Find your printer name:
+`rcpr` talks to the printer directly over TCP on port 9100, the raw ESC/POS port that essentially
+every network thermal printer exposes. All you need is its IP address — find it from your router's
+lease table or by printing the printer's self-test page.
+
+Point `rcpr` at it with `-H`:
 
 ```bash
-lpstat -p
+rcpr -H 192.168.1.50 "hello"
+rcpr -H 192.168.1.50:9100 "hello"   # explicit port
 ```
 
-Set it as your system default:
+The default host is compiled in as `10.70.1.20:9100` (see `DEFAULT_HOST` in `src/rcpr.c`). Change it
+there and rebuild if you want a bare `rcpr "text"` to reach your own printer.
+
+Confirm the printer is listening before troubleshooting anything else:
 
 ```bash
-lpoptions -d YOUR_PRINTER
+nc -vz 192.168.1.50 9100
 ```
-
-Or specify it per-command with `-P YOUR_PRINTER`.
 
 ## Usage
 
@@ -53,8 +62,9 @@ Or specify it per-command with `-P YOUR_PRINTER`.
 rcpr [OPTIONS] [TEXT]
 
 Output:
-  -d DEVICE    Output device or "-" for stdout (default: CUPS printer)
-  -P PRINTER   CUPS printer name (default: system default)
+  -H HOST[:PORT]  Network printer (default: 10.70.1.20:9100)
+  -d DEVICE    Output device or "-" for stdout
+  -P PRINTER   Print via CUPS queue instead of the network
 
 Text:
   -s SIZE      Font size 1-8 (default: 1)
@@ -63,49 +73,74 @@ Text:
   -b           Bold
   -u           Underline
   -w WIDTH     Override chars-per-line (auto from font/size)
+  -W           Disable word wrapping
 
 Image:
   -i FILE      Print image (PNG, JPG, GIF, BMP)
 
 Control:
-  -c           Cut paper after printing
+  -C           Do not cut the paper (cutting is the default)
   -n N         Feed N lines after print (default: 4)
   -r           Reset printer before printing
 
 Input:
   -f FILE      Read text from file ("-" for stdin)
+               Text is also read from stdin when piped
 ```
 
 ## Examples
 
-Print text with a paper cut:
+Print some text — it wraps, feeds, and cuts on its own:
 
 ```bash
-rcpr -c "Hello World"
+rcpr "Hello World"
+```
+
+Pipe a file in:
+
+```bash
+cat notes.txt | rcpr
+rcpr < notes.txt
+rcpr -f notes.txt
 ```
 
 Bold centered header:
 
 ```bash
-rcpr -b -a center -c "Receipt Header"
+rcpr -b -a center "Receipt Header"
 ```
 
-Justified text from stdin:
+Justified prose:
 
 ```bash
-echo "long text here" | rcpr -f - -a justify -c
+fortune | rcpr -a justify
 ```
 
 Print an image:
 
 ```bash
-rcpr -i logo.png -c
+rcpr -i logo.png
 ```
 
-Multiple styles in one print job:
+Keep the paper attached so several prints come out on one strip:
 
 ```bash
-(rcpr -d - -s 3 -b "HEADER"; rcpr -d - "body text"; rcpr -d - -n 4 -c "") | lp -o raw
+rcpr -C "first part"
+rcpr "second part, cut here"
+```
+
+Send to a different printer, a raw device, or a CUPS queue:
+
+```bash
+rcpr -H 192.168.1.50 "other printer"
+rcpr -d /dev/usb/lp0 "usb printer"
+rcpr -P ticket "via CUPS"
+```
+
+Inspect the ESC/POS bytes without printing:
+
+```bash
+rcpr -d - "test" | od -An -tx1
 ```
 
 ## Claude Code Integration

@@ -28,6 +28,7 @@ void esc_underline(buf_t *b, int on);
 void esc_align(buf_t *b, int a);
 void esc_feed(buf_t *b, int n);
 void esc_cut(buf_t *b);
+/* word-wrap at width characters (UTF-8 aware); width <= 0 disables wrapping */
 void esc_text(buf_t *b, const char *text, int width, int align);
 
 /* raster image: raw 1-bit packed data */

@@ -2,12 +2,13 @@
 name: rcpr
 description: Print text or images to the ESC/POS receipt printer
 argument-hint: [text or options]
-allowed-tools: Bash(rcpr *), Bash(echo * | rcpr *), Bash(lp *), Bash(lpstat *)
+allowed-tools: Bash(rcpr *), Bash(echo * | rcpr *), Bash(cat * | rcpr *)
 ---
 
 # rcpr - Receipt Printer Skill
 
-Print text or images to the receipt printer using `rcpr`.
+Print text or images to the receipt printer using `rcpr`. It sends ESC/POS directly to the printer
+over the network, wraps text, and cuts the paper on its own.
 
 ## Usage
 
@@ -16,8 +17,9 @@ rcpr [OPTIONS] [TEXT]
 ```
 
 **Output:**
-- `-d DEVICE` — Output device or `-` for stdout (default: CUPS printer)
-- `-P PRINTER` — CUPS printer name (default: system default via `lpstat -d`)
+- `-H HOST[:PORT]` — Network printer (default: compiled-in host, port 9100)
+- `-d DEVICE` — Output device or `-` for stdout
+- `-P PRINTER` — Print via a CUPS queue instead of the network
 
 **Text:**
 - `-s SIZE` — Font size 1-8 (default: 1)
@@ -26,57 +28,68 @@ rcpr [OPTIONS] [TEXT]
 - `-b` — Bold
 - `-u` — Underline
 - `-w WIDTH` — Override chars-per-line (auto-detected from font/size)
+- `-W` — Disable word wrapping
 
 **Image:**
 - `-i FILE` — Print image (PNG, JPG, GIF, BMP)
 
 **Control:**
-- `-c` — Cut paper after printing
+- `-C` — Do NOT cut the paper (cutting is the default)
 - `-n N` — Feed N lines after print (default: 4)
 - `-r` — Reset printer before printing
 
 **Input:**
-- `-f FILE` — Read text from file (`-` for stdin)
+- `-f FILE` — Read text from file (`-` for stdin). Text is also read from stdin when piped.
 
 ## Printer Setup
 
-Find your printer with `lpstat -p`. Either set it as the system default (`lpoptions -d YOUR_PRINTER`) or pass `-P YOUR_PRINTER` to each command.
+The printer's address is compiled into the binary, so no setup is normally needed. Override it per
+command with `-H 192.168.1.50` or `-H 192.168.1.50:9100`. To change the default permanently, edit
+`DEFAULT_HOST` in `src/rcpr.c` and rebuild.
 
 ## Examples
 
-Print simple text with cut:
+Print simple text (wraps and cuts automatically):
 ```bash
-rcpr -c "Hello World"
+rcpr "Hello World"
 ```
 
-Print bold centered text with cut:
+Print bold centered text:
 ```bash
-rcpr -b -a center -c "Receipt Header"
+rcpr -b -a center "Receipt Header"
 ```
 
-Print justified text from stdin with cut:
+Print a file or piped text:
 ```bash
-echo "long text here" | rcpr -f - -a justify -c
+cat notes.txt | rcpr
+rcpr -f notes.txt -a justify
 ```
 
 Print an image:
 ```bash
-rcpr -i logo.png -c
+rcpr -i logo.png
 ```
 
-Multiple styles in one job (pipe through lp):
+Several prints on one uncut strip:
 ```bash
-(rcpr -d - -s 3 -b "HEADER"; rcpr -d - "body text"; rcpr -d - -n 4 -c "") | lp -o raw
+rcpr -C -s 3 -b "HEADER"
+rcpr -C "body text"
+rcpr "last part, cuts here"
 ```
 
 ## Tips
 
-- Always use `-c` (cut) unless the user says not to.
-- When combining multiple styles in one print job, use `-d -` to output raw bytes and pipe through `lp -o raw`.
+- Cutting is the default. Use `-C` only when the user wants the paper left attached, or when
+  building one receipt from several commands — put `-C` on every command except the last.
+- `-c` is still accepted and does nothing; it is left over from older versions.
+- Word wrapping is on by default, is UTF-8 aware, and preserves leading indentation. Use `-W` only
+  when the user explicitly wants long lines left unwrapped.
 - Font 0 (default) has 48 chars per line at size 1. Font 1 has 64.
 - Chars per line = base / size. At size 2, font 0 gives 24 chars per line.
+- To check output without wasting paper, use `-d -` to dump the raw bytes to stdout.
 - The user will tell you what to print. Interpret their request and pick the right options.
 
 ## When invoked as `/rcpr`
 
-The user's `$ARGUMENTS` are a description of what they want printed. Translate their request into the appropriate rcpr command(s) and run them.
+The user's `$ARGUMENTS` are a description of what they want printed. Translate their request into
+the appropriate rcpr command(s) and run them.

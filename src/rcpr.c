@@ -4,11 +4,18 @@
 #include <string.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include "escpos.h"
 #include "image.h"
 
-#define VERSION "0.1.0"
+#ifndef VERSION /* normally supplied by the build */
+#define VERSION "0.2.0"
+#endif
 #define MAX_DOTS 576
+#define DEFAULT_HOST "10.70.1.20"
+#define DEFAULT_PORT "9100"
 
 static void usage(void)
 {
@@ -16,8 +23,9 @@ static void usage(void)
 "Usage: rcpr [OPTIONS] [TEXT]\n"
 "\n"
 "Output:\n"
-"  -d DEVICE    Output device or \"-\" for stdout (default: CUPS printer)\n"
-"  -P PRINTER   CUPS printer name (default: system default)\n"
+"  -H HOST[:PORT]  Network printer (default: " DEFAULT_HOST ":" DEFAULT_PORT ")\n"
+"  -d DEVICE    Output device or \"-\" for stdout\n"
+"  -P PRINTER   Print via CUPS queue instead of the network\n"
 "\n"
 "Text:\n"
 "  -s SIZE      Font size 1-8 (default: 1)\n"
@@ -26,17 +34,19 @@ static void usage(void)
 "  -b           Bold\n"
 "  -u           Underline\n"
 "  -w WIDTH     Override chars-per-line (auto from font/size)\n"
+"  -W           Disable word wrapping\n"
 "\n"
 "Image:\n"
 "  -i FILE      Print image (PNG, JPG, GIF, BMP)\n"
 "\n"
 "Control:\n"
-"  -c           Cut paper after printing\n"
+"  -C           Do not cut the paper (cutting is the default)\n"
 "  -n N         Feed N lines after print (default: 4)\n"
 "  -r           Reset printer before printing\n"
 "\n"
 "Input:\n"
 "  -f FILE      Read text from file (\"-\" for stdin)\n"
+"               Text is also read from stdin when piped\n"
 "\n"
 "Info:\n"
 "  -h           Help\n"
@@ -62,30 +72,64 @@ static char *read_file(const char *path)
 	return buf;
 }
 
-/* get default CUPS printer name */
-static char *default_printer(void)
+/* split HOST or HOST:PORT (a bare IPv6 literal keeps the default port) */
+static void parse_host(char *arg, const char **host, const char **port)
 {
-	FILE *p = popen("lpstat -d 2>/dev/null", "r");
-	if (!p) return NULL;
-	char line[256];
-	char *name = NULL;
-	if (fgets(line, sizeof(line), p)) {
-		/* "system default destination: PrinterName" */
-		char *colon = strchr(line, ':');
-		if (colon) {
-			colon++;
-			while (*colon == ' ') colon++;
-			char *end = colon + strlen(colon) - 1;
-			while (end > colon && (*end == '\n' || *end == ' ')) *end-- = '\0';
-			name = strdup(colon);
-		}
+	char *c = strchr(arg, ':');
+	if (c && !strchr(c + 1, ':')) {
+		*c = '\0';
+		*port = c + 1;
 	}
-	pclose(p);
-	return name;
+	*host = arg;
+}
+
+/* send buffer to a network printer (raw ESC/POS over TCP) */
+static int send_net(buf_t *b, const char *host, const char *port)
+{
+	struct addrinfo hints, *res, *ai;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+
+	int e = getaddrinfo(host, port, &hints, &res);
+	if (e) {
+		fprintf(stderr, "rcpr: %s:%s: %s\n", host, port, gai_strerror(e));
+		return 1;
+	}
+
+	int fd = -1;
+	for (ai = res; ai; ai = ai->ai_next) {
+		fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+		if (fd < 0) continue;
+		if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
+		close(fd);
+		fd = -1;
+	}
+	freeaddrinfo(res);
+	if (fd < 0) {
+		fprintf(stderr, "rcpr: cannot connect to %s:%s: %s\n",
+			host, port, strerror(errno));
+		return 1;
+	}
+
+	/* socket writes can be short: loop until the whole job is out */
+	size_t off = 0;
+	while (off < b->len) {
+		ssize_t n = write(fd, b->data + off, b->len - off);
+		if (n <= 0) {
+			perror("rcpr: write");
+			close(fd);
+			return 1;
+		}
+		off += (size_t)n;
+	}
+	close(fd);
+	return 0;
 }
 
 /* flush buffer to output target */
-static int flush_output(buf_t *b, const char *device, const char *printer)
+static int flush_output(buf_t *b, const char *device, const char *printer,
+			const char *host, const char *port)
 {
 	if (device && strcmp(device, "-") == 0) {
 		/* stdout */
@@ -102,19 +146,18 @@ static int flush_output(buf_t *b, const char *device, const char *printer)
 		return 0;
 	}
 
-	/* CUPS via lp */
-	char *pr = printer ? strdup(printer) : default_printer();
-	char cmd[512];
-	if (pr)
-		snprintf(cmd, sizeof(cmd), "lp -d '%s' -o raw", pr);
-	else
-		snprintf(cmd, sizeof(cmd), "lp -o raw");
-	free(pr);
+	if (printer) {
+		/* CUPS via lp */
+		char cmd[512];
+		snprintf(cmd, sizeof(cmd), "lp -d '%s' -o raw", printer);
+		FILE *p = popen(cmd, "w");
+		if (!p) { perror("lp"); return 1; }
+		fwrite(b->data, 1, b->len, p);
+		return pclose(p) ? 1 : 0;
+	}
 
-	FILE *p = popen(cmd, "w");
-	if (!p) { perror("lp"); return 1; }
-	fwrite(b->data, 1, b->len, p);
-	return pclose(p) ? 1 : 0;
+	/* network socket */
+	return send_net(b, host, port);
 }
 
 static int parse_align(const char *s)
@@ -130,23 +173,27 @@ static int parse_align(const char *s)
 int main(int argc, char **argv)
 {
 	char *device = NULL, *printer = NULL, *image = NULL, *textfile = NULL;
+	const char *host = DEFAULT_HOST, *port = DEFAULT_PORT;
 	int size = 1, font = 0, align = ALIGN_LEFT;
-	int bold = 0, underline = 0, cut = 0, reset = 0;
-	int feed = 4, width = 0;
+	int bold = 0, underline = 0, cut = 1, reset = 0;
+	int feed = 4, width = 0, nowrap = 0;
 	int opt;
 
-	while ((opt = getopt(argc, argv, "d:P:s:S:a:buw:i:cn:rf:hv")) != -1) {
+	while ((opt = getopt(argc, argv, "d:P:H:s:S:a:buw:Wi:cCn:rf:hv")) != -1) {
 		switch (opt) {
 		case 'd': device = optarg; break;
 		case 'P': printer = optarg; break;
+		case 'H': parse_host(optarg, &host, &port); break;
 		case 's': size = atoi(optarg); break;
 		case 'S': font = atoi(optarg); break;
 		case 'a': align = parse_align(optarg); break;
 		case 'b': bold = 1; break;
 		case 'u': underline = 1; break;
 		case 'w': width = atoi(optarg); break;
+		case 'W': nowrap = 1; break;
 		case 'i': image = optarg; break;
-		case 'c': cut = 1; break;
+		case 'c': break; /* accepted: cutting is the default */
+		case 'C': cut = 0; break;
 		case 'n': feed = atoi(optarg); break;
 		case 'r': reset = 1; break;
 		case 'f': textfile = optarg; break;
@@ -156,8 +203,10 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* auto-detect chars per line */
-	if (!width) {
+	/* auto-detect chars per line (-W turns wrapping off entirely) */
+	if (nowrap) {
+		width = 0;
+	} else if (!width) {
 		int base_cpl = (font == 1) ? 64 : 48;
 		width = base_cpl / (size > 0 ? size : 1);
 		if (width < 1) width = 1;
@@ -178,6 +227,13 @@ int main(int argc, char **argv)
 			if (i > optind) strcat(text, " ");
 			strcat(text, argv[i]);
 		}
+	}
+
+	/* nothing given: read stdin when it is a pipe or a redirect */
+	if (!text && !image && !isatty(STDIN_FILENO)) {
+		text = read_file("-");
+		/* empty input is not a print job: do not waste paper on it */
+		if (text && !*text) { free(text); text = NULL; }
 	}
 
 	/* need something to print */
@@ -221,7 +277,7 @@ int main(int argc, char **argv)
 	if (bold) esc_bold(&b, 0);
 	if (underline) esc_underline(&b, 0);
 
-	int ret = flush_output(&b, device, printer);
+	int ret = flush_output(&b, device, printer, host, port);
 	buf_free(&b);
 	return ret;
 }

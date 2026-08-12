@@ -8,6 +8,7 @@ depcomp
 install-sh
 missing
 configure
+configure~
 config.log
 config.status
 Makefile
