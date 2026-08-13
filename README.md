@@ -23,7 +23,7 @@ ESC/POS receipt printer CLI — print text and images from the command line via 
 No external libraries are required. CUPS is optional and only needed if you use `-P`, which shells
 out to `lp`.
 
-### Build
+### Build (Linux)
 
 ```bash
 autoreconf -fi
@@ -33,6 +33,48 @@ sudo make install
 ```
 
 This installs `rcpr` to `/usr/local/bin`.
+
+### Build (macOS)
+
+`rcpr` is plain POSIX C, so it builds and runs on macOS unchanged. macOS ships a compiler but not
+autotools, so install those first.
+
+Install the Xcode Command Line Tools (provides `clang` and `make`):
+
+```bash
+xcode-select --install
+```
+
+Install autoconf and automake with [Homebrew](https://brew.sh):
+
+```bash
+brew install autoconf automake
+```
+
+Then build and install:
+
+```bash
+autoreconf -fi
+./configure
+make
+sudo make install
+```
+
+`configure` is not checked into the repo, so `autoreconf -fi` is required — you cannot skip it.
+
+This installs `rcpr` to `/usr/local/bin`, which is already on the default macOS `PATH`. To install
+somewhere you own instead and skip the `sudo`:
+
+```bash
+./configure --prefix="$HOME/.local"
+make && make install
+```
+
+Then make sure `~/.local/bin` is on your `PATH`:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && exec zsh
+```
 
 ## Printer Setup
 
@@ -137,6 +179,10 @@ rcpr -H 192.168.1.50 "other printer"
 rcpr -d /dev/usb/lp0 "usb printer"
 rcpr -P ticket "via CUPS"
 ```
+
+macOS has no `/dev/usb/lp*` — a USB thermal printer binds to the USB printing class driver rather
+than a character device. Use the network path (`-H`), or add the printer in System Settings and go
+through CUPS with `-P` (`lpstat -p` lists the queue names).
 
 Inspect the ESC/POS bytes without printing:
 
